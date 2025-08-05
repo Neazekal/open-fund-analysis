@@ -26,12 +26,12 @@ class FundData:
         self.start_date = start_date
         self.end_date = end_date
 
-    def take_list_fund_name(self):
+    def take_list_fund_info(self):
         """
-        Retrieves the list of available fund names from VnStock.
+        Retrieves the list of available fund info from VnStock.
 
         Returns:
-            A DataFrame containing listed fund names and metadata.
+            A DataFrame containing listed fund information.
         """
         return Fund().listing()
     
