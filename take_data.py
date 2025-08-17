@@ -1,6 +1,7 @@
 from vnstock.explorer.fmarket.fund import Fund
 import pandas as pd
 import time
+from vnstock import Vnstock
 
 fund = Fund()
 
@@ -17,7 +18,7 @@ class OpenData:
         fund_type (int, optional): Type of fund.
             1 - Bond fund (Quỹ trái phiếu)
             2 - Balanced fund (Quỹ cân bằng)
-            3 - Equity fund (Quỹ cổ phiếu)
+            3 - Stock fund (Quỹ cổ phiếu)
     """
 
     def __init__(self, fund_type=None):
@@ -25,7 +26,7 @@ class OpenData:
         Initializes the FundData class with fund type and date range.
 
         Args:
-            fund_type (int, optional): Type of fund (1: Bond, 2: Balanced, 3: Equity).
+            fund_type (int, optional): Type of fund (1: Bond, 2: Balanced, 3: Stock).
         """
         self.fund_type = fund_type
 
@@ -44,7 +45,7 @@ class OpenData:
 
         Returns:
             list or DataFrame: 
-                - If fund_type is 1 (Bond fund), 2 (Balanced fund), or 3 (Equity fund),
+                - If fund_type is 1 (Bond fund), 2 (Balanced fund), or 3 (Stock fund),
                 returns a list of short names for the corresponding fund type.
                 - If fund_type is None or invalid, returns the full DataFrame of all listed funds.
         
@@ -52,7 +53,7 @@ class OpenData:
             fund_type mapping:
                 1 - Bond fund (Quỹ trái phiếu)
                 2 - Balanced fund (Quỹ cân bằng)
-                3 - Equity fund (Quỹ cổ phiếu)
+                3 - Stock fund (Quỹ cổ phiếu)
         """
         all_funds = self.take_list_fund_info()
         if self.fund_type == 1:
@@ -92,6 +93,27 @@ class OpenData:
                 print(f"Waiting 90 seconds to avoid rate limit...")
                 time.sleep(90)
         
+def get_symbol_data(symbol_name, start_date, end_date, dir):
+    """
+    Retrieve historical stock data for a given symbol and save it as a CSV file.
+
+    Args:
+        symbol_name (str): Stock ticker/symbol (e.g., 'VNM', 'VCB').
+        start_date (str): Start date of the data in 'YYYY-MM-DD' format.
+        end_date (str): End date of the data in 'YYYY-MM-DD' format.
+        dir (str): Directory path where the CSV file will be saved.
+
+    Returns:
+        None
+    """
+    # Initialize a stock object for the given symbol using TCBS as the data source
+    symbol = Vnstock().stock(symbol=symbol_name, source='TCBS')
+
+    # Get the historical quote data between start_date and end_date
+    data = symbol.quote.history(start=start_date, end=end_date)
+
+    # Save the data to a CSV file named after the stock symbol in the given directory
+    data.to_csv(f"{dir}/{symbol_name}.csv", index=False)
 
 
         
