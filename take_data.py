@@ -2,6 +2,7 @@ from vnstock.explorer.fmarket.fund import Fund
 import pandas as pd
 import time
 from vnstock import Vnstock
+from vnstock import Quote
 
 fund = Fund()
 
@@ -107,10 +108,10 @@ def get_symbol_data(symbol_name, start_date, end_date, dir):
         None
     """
     # Initialize a stock object for the given symbol using TCBS as the data source
-    symbol = Vnstock().stock(symbol=symbol_name, source='TCBS')
+    symbol = Quote(symbol=symbol_name, source='TCBS')
 
     # Get the historical quote data between start_date and end_date
-    data = symbol.quote.history(start=start_date, end=end_date)
+    data = symbol.history(start=start_date, end=end_date)
 
     # Save the data to a CSV file named after the stock symbol in the given directory
     data.to_csv(f"{dir}/{symbol_name}.csv", index=False)
