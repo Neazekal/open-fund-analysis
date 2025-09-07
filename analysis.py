@@ -113,38 +113,26 @@ def compute_metrics_single(df: pd.DataFrame, rf_annual: float = 0.03) -> Dict[st
 # ---------- Peer comparison with ≥1 calendar year requirement ----------
 def compare_funds(file_paths: List[str], rf_annual: float = 0.03) -> pd.DataFrame:
     """
-    Build a ranking table for funds that have at least 1 calendar year of history (>= 365 days span).
-    Funds failing the requirement are dropped (not evaluated).
+    Build a ranking table for funds/indexes with at least min_years of valid history.
     """
     rows = []
-    dropped = []
-
     for path in file_paths:
-        df = load_data(path)
-        yrs = span_years(df["date"])
-        if not np.isfinite(yrs) or yrs < 1.0:
-            dropped.append((df["short_name"].iloc[0], yrs))
-            continue  # enforce ≥ 1 year coverage
-
+        df = load_index_data(path)
+        if df.empty:
+            continue
         m = compute_metrics_single(df, rf_annual=rf_annual)
         rows.append({"fund": df["short_name"].iloc[0], **m})
 
     rank_df = pd.DataFrame(rows)
     if rank_df.empty:
-        return rank_df  # nothing to compare
+        return rank_df
 
-    # nice column order
     cols = [
         "fund", "start_date", "end_date", "years", "obs_per_year",
         "cagr", "vol_annual", "sharpe", "max_drawdown", "calmar",
         "ret_1m", "ret_3m", "ret_6m", "ret_ytd", "ret_1y"
     ]
     rank_df = rank_df[cols].sort_values(by=["sharpe", "cagr"], ascending=[False, False], na_position="last").reset_index(drop=True)
-
-    if dropped:
-        # attach a note for your notebook to inspect
-        rank_df.attrs["dropped_funds"] = dropped
-
     return rank_df
 
 
@@ -183,18 +171,23 @@ def load_index_data(
     min_years: int = 2
 ) -> pd.DataFrame:
     """
-    Load index CSV -> DataFrame with [date, nav_per_unit, short_name].
-    Use column 'close' as nav_per_unit.
-    Only return DataFrame if:
-      - First valid year has at least `min_months_first_year` months of data.
-      - Index exists for at least `min_years` years (from the first valid year onward).
-    Otherwise, return empty DataFrame.
+    Unified loader for fund/index CSV -> DataFrame [date, nav_per_unit, short_name].
+    - Accepts either:
+        * fund CSV with [date, nav_per_unit]
+        * index CSV with [time, close]
+    - Enforces conditions:
+        * First valid year >= min_months_first_year months of data
+        * At least min_years of existence
     """
     df = pd.read_csv(csv_path)
-    if "time" not in df.columns or "close" not in df.columns:
-        raise ValueError(f"{csv_path} must contain columns: time, close")
 
-    df = df.rename(columns={"time": "date", "close": "nav_per_unit"})
+    if {"date", "nav_per_unit"}.issubset(df.columns):
+        df = df.rename(columns={"date": "date", "nav_per_unit": "nav_per_unit"})
+    elif {"time", "close"}.issubset(df.columns):
+        df = df.rename(columns={"time": "date", "close": "nav_per_unit"})
+    else:
+        raise ValueError(f"{csv_path} must contain either [date, nav_per_unit] or [time, close]")
+
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").drop_duplicates(subset="date").reset_index(drop=True)
     df["short_name"] = Path(csv_path).stem.upper()
@@ -227,19 +220,20 @@ def load_index_data(
 
 def yearly_comparison_multi_index(
     fund_paths: List[str],
-    index_paths: List[str]
+    index_paths: List[str],
+    min_months_first_year: int = 3
 ) -> pd.DataFrame:
     """
     Compare funds with multiple indexes on a yearly basis.
-    Assumes load_data / load_index_data already filter out invalid funds or indexes.
-    Each index will have 2 columns: return_x and beat_x (x = index name).
+    - Find the first valid year of the fund that has at least `min_months_first_year` months of data.
+    - Skip all earlier years.
+    - Later years only require data at the beginning and end of the year.
+    - Each index will have 2 columns: return_x and beat_x (x = index name).
     """
     # Load all indexes
     index_dfs = {}
     for path in index_paths:
         df = load_index_data(path)
-        if df.empty:
-            continue
         df = df.set_index("date")
         name = df["short_name"].iloc[0]
         index_dfs[name] = df
@@ -247,15 +241,34 @@ def yearly_comparison_multi_index(
     results = []
 
     for path in fund_paths:
-        fund_df = load_data(path)
-        if fund_df.empty:
-            continue
-        fund_df = fund_df.set_index("date")
+        fund_df = load_data(path).set_index("date")
         fund_name = fund_df["short_name"].iloc[0]
 
+        # List of available years
         years = sorted(set(fund_df.index.year))
+        if not years:
+            continue
 
+        # Find first valid year with at least min_months_first_year months
+        valid_start_year = None
         for yr in years:
+            fund_year = fund_df[fund_df.index.year == yr]
+            if fund_year.empty:
+                continue
+            months = (fund_year.index[-1] - fund_year.index[0]).days / 30.44
+            if months >= min_months_first_year:
+                valid_start_year = yr
+                break
+
+        if valid_start_year is None:
+            # No valid year at all
+            continue
+
+        # Process from valid_start_year onward
+        for yr in years:
+            if yr < valid_start_year:
+                continue
+
             fund_year = fund_df[fund_df.index.year == yr]
             if fund_year.empty:
                 continue
@@ -267,7 +280,7 @@ def yearly_comparison_multi_index(
             fund_end = fund_year["nav_per_unit"].iloc[-1]
             row["fund_return"] = fund_end / fund_start - 1
 
-            # Compare with each index
+            # Index comparisons
             for idx_name, idx_df in index_dfs.items():
                 idx_year = idx_df[idx_df.index.year == yr]
                 if idx_year.empty:
