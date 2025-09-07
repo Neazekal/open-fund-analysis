@@ -25,7 +25,7 @@ def span_years(dates: pd.Series) -> float:
     if dates.empty:
         return np.nan
     days = (dates.iloc[-1] - dates.iloc[0]).days
-    return days / 365.25 if days > 0 else np.nan
+    return days / 365 if days > 0 else np.nan
 
 
 def infer_periods_per_year(dates: pd.Series) -> float:
@@ -177,10 +177,18 @@ def bar_rank(df: pd.DataFrame, col: str, title: str):
     plt.tight_layout()
     plt.show()
     
-def load_index_data(csv_path: str) -> pd.DataFrame:
+def load_index_data(
+    csv_path: str,
+    min_months_first_year: int = 3,
+    min_years: int = 2
+) -> pd.DataFrame:
     """
     Load index CSV -> DataFrame with [date, nav_per_unit, short_name].
     Use column 'close' as nav_per_unit.
+    Only return DataFrame if:
+      - First valid year has at least `min_months_first_year` months of data.
+      - Index exists for at least `min_years` years (from the first valid year onward).
+    Otherwise, return empty DataFrame.
     """
     df = pd.read_csv(csv_path)
     if "time" not in df.columns or "close" not in df.columns:
@@ -190,24 +198,48 @@ def load_index_data(csv_path: str) -> pd.DataFrame:
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").drop_duplicates(subset="date").reset_index(drop=True)
     df["short_name"] = Path(csv_path).stem.upper()
+
+    # Check conditions
+    years = sorted(set(df["date"].dt.year))
+    if not years:
+        return pd.DataFrame()
+
+    valid_start_year = None
+    for yr in years:
+        year_df = df[df["date"].dt.year == yr]
+        if year_df.empty:
+            continue
+        months = (year_df["date"].iloc[-1] - year_df["date"].iloc[0]).days / 30.44
+        if months >= min_months_first_year:
+            valid_start_year = yr
+            break
+
+    if valid_start_year is None:
+        return pd.DataFrame()
+
+    valid_years = [yr for yr in years if yr >= valid_start_year]
+    if len(valid_years) < min_years:
+        return pd.DataFrame()
+
     return df[["date", "nav_per_unit", "short_name"]]
+
     
 
 def yearly_comparison_multi_index(
     fund_paths: List[str],
-    index_paths: List[str],
-    min_months_first_year: int = 3
+    index_paths: List[str]
 ) -> pd.DataFrame:
     """
     Compare funds with multiple indexes on a yearly basis.
-    - If the first year of the fund has < min_months_first_year months of data, skip it.
-    - Later years only require data at the beginning and end of the year.
-    - Each index will have 2 columns: return_x and beat_x (x = index name).
+    Assumes load_data / load_index_data already filter out invalid funds or indexes.
+    Each index will have 2 columns: return_x and beat_x (x = index name).
     """
     # Load all indexes
     index_dfs = {}
     for path in index_paths:
         df = load_index_data(path)
+        if df.empty:
+            continue
         df = df.set_index("date")
         name = df["short_name"].iloc[0]
         index_dfs[name] = df
@@ -215,32 +247,27 @@ def yearly_comparison_multi_index(
     results = []
 
     for path in fund_paths:
-        fund_df = load_data(path).set_index("date")
+        fund_df = load_data(path)
+        if fund_df.empty:
+            continue
+        fund_df = fund_df.set_index("date")
         fund_name = fund_df["short_name"].iloc[0]
 
-        # List of available years
         years = sorted(set(fund_df.index.year))
-        first_year = years[0] if years else None
 
         for yr in years:
             fund_year = fund_df[fund_df.index.year == yr]
             if fund_year.empty:
                 continue
 
-            # First year must have at least min_months_first_year months of data
-            if yr == first_year:
-                months = (fund_year.index[-1] - fund_year.index[0]).days / 30.44
-                if months < min_months_first_year:
-                    continue
-
             row = {"fund": fund_name, "year": yr}
 
-            # Fund return for the year
+            # Fund return
             fund_start = fund_year["nav_per_unit"].iloc[0]
             fund_end = fund_year["nav_per_unit"].iloc[-1]
             row["fund_return"] = fund_end / fund_start - 1
 
-            # Add columns for each index
+            # Compare with each index
             for idx_name, idx_df in index_dfs.items():
                 idx_year = idx_df[idx_df.index.year == yr]
                 if idx_year.empty:
