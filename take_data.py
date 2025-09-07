@@ -91,8 +91,8 @@ class OpenData:
                     
             # Wait 90 seconds between chunks to avoid hitting the rate limit
             if (idx + 1) * 10 < len(name_list):
-                print(f"Waiting 90 seconds to avoid rate limit...")
-                time.sleep(90)
+                print(f"Waiting 300 seconds to avoid rate limit...")
+                time.sleep(300)
         
 def get_symbol_data(symbol_name, start_date, end_date, dir):
     """
