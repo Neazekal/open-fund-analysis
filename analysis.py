@@ -8,15 +8,61 @@ import seaborn as sns
 
 
 # ---------- I/O & helpers ----------
-def load_data(csv_path: str) -> pd.DataFrame:
-    """Load one fund CSV -> DataFrame with [date, nav_per_unit, short_name]."""
+def load_index_data(
+    csv_path: str,
+    min_months_first_year: int = 3,
+    min_years: int = 2
+) -> pd.DataFrame:
+    """
+    Unified loader for fund/index CSV -> DataFrame [date, nav_per_unit, short_name].
+    - Accepts either:
+        * fund CSV with [date, nav_per_unit]
+        * index CSV with [time, close]
+    - Enforces conditions:
+        * First valid year >= min_months_first_year months of data
+        * At least min_years of existence
+    Returns:
+        DataFrame with columns [date, nav_per_unit, short_name].
+        If invalid -> empty DataFrame with the same columns.
+    """
+    # Read file
     df = pd.read_csv(csv_path)
-    if "date" not in df.columns or "nav_per_unit" not in df.columns:
-        raise ValueError(f"{csv_path} must contain columns: date, nav_per_unit (and optionally short_name).")
+
+    # Normalize schema
+    if {"date", "nav_per_unit"}.issubset(df.columns):
+        df = df.rename(columns={"date": "date", "nav_per_unit": "nav_per_unit"})
+    elif {"time", "close"}.issubset(df.columns):
+        df = df.rename(columns={"time": "date", "close": "nav_per_unit"})
+    else:
+        raise ValueError(f"{csv_path} must contain either [date, nav_per_unit] or [time, close]")
+
+    # Clean
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").drop_duplicates(subset="date").reset_index(drop=True)
-    if "short_name" not in df.columns:
-        df["short_name"] = Path(csv_path).stem.upper()
+    df["short_name"] = Path(csv_path).stem.upper()
+
+    # Validation
+    years = sorted(set(df["date"].dt.year))
+    if not years:
+        return pd.DataFrame(columns=["date", "nav_per_unit", "short_name"])
+
+    valid_start_year = None
+    for yr in years:
+        year_df = df[df["date"].dt.year == yr]
+        if year_df.empty:
+            continue
+        months = (year_df["date"].iloc[-1] - year_df["date"].iloc[0]).days / 30.44
+        if months >= min_months_first_year:
+            valid_start_year = yr
+            break
+
+    if valid_start_year is None:
+        return pd.DataFrame(columns=["date", "nav_per_unit", "short_name"])
+
+    valid_years = [yr for yr in years if yr >= valid_start_year]
+    if len(valid_years) < min_years:
+        return pd.DataFrame(columns=["date", "nav_per_unit", "short_name"])
+
     return df[["date", "nav_per_unit", "short_name"]]
 
 
@@ -165,58 +211,7 @@ def bar_rank(df: pd.DataFrame, col: str, title: str):
     plt.tight_layout()
     plt.show()
     
-def load_index_data(
-    csv_path: str,
-    min_months_first_year: int = 3,
-    min_years: int = 2
-) -> pd.DataFrame:
-    """
-    Unified loader for fund/index CSV -> DataFrame [date, nav_per_unit, short_name].
-    - Accepts either:
-        * fund CSV with [date, nav_per_unit]
-        * index CSV with [time, close]
-    - Enforces conditions:
-        * First valid year >= min_months_first_year months of data
-        * At least min_years of existence
-    """
-    df = pd.read_csv(csv_path)
 
-    if {"date", "nav_per_unit"}.issubset(df.columns):
-        df = df.rename(columns={"date": "date", "nav_per_unit": "nav_per_unit"})
-    elif {"time", "close"}.issubset(df.columns):
-        df = df.rename(columns={"time": "date", "close": "nav_per_unit"})
-    else:
-        raise ValueError(f"{csv_path} must contain either [date, nav_per_unit] or [time, close]")
-
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date").drop_duplicates(subset="date").reset_index(drop=True)
-    df["short_name"] = Path(csv_path).stem.upper()
-
-    # Check conditions
-    years = sorted(set(df["date"].dt.year))
-    if not years:
-        return pd.DataFrame()
-
-    valid_start_year = None
-    for yr in years:
-        year_df = df[df["date"].dt.year == yr]
-        if year_df.empty:
-            continue
-        months = (year_df["date"].iloc[-1] - year_df["date"].iloc[0]).days / 30.44
-        if months >= min_months_first_year:
-            valid_start_year = yr
-            break
-
-    if valid_start_year is None:
-        return pd.DataFrame()
-
-    valid_years = [yr for yr in years if yr >= valid_start_year]
-    if len(valid_years) < min_years:
-        return pd.DataFrame()
-
-    return df[["date", "nav_per_unit", "short_name"]]
-
-    
 
 def yearly_comparison_multi_index(
     fund_paths: List[str],
@@ -241,10 +236,12 @@ def yearly_comparison_multi_index(
     results = []
 
     for path in fund_paths:
-        fund_df = load_data(path).set_index("date")
+        fund_df = load_index_data(path)
+        if fund_df.empty:
+            continue  # skip invalid or too-short funds
+        fund_df = fund_df.set_index("date")
         fund_name = fund_df["short_name"].iloc[0]
 
-        # List of available years
         years = sorted(set(fund_df.index.year))
         if not years:
             continue
