@@ -8,7 +8,7 @@ import seaborn as sns
 
 
 # ---------- I/O & helpers ----------
-def load_index_data(
+def load_data(
     csv_path: str,
     min_months_first_year: int = 3,
     min_years: int = 2
@@ -155,7 +155,6 @@ def compute_metrics_single(df: pd.DataFrame, rf_annual: float = 0.03) -> Dict[st
         "ret_1y": period_return(df, 365),
     }
 
-
 # ---------- Peer comparison with ≥1 calendar year requirement ----------
 def compare_funds(file_paths: List[str], rf_annual: float = 0.03) -> pd.DataFrame:
     """
@@ -163,7 +162,7 @@ def compare_funds(file_paths: List[str], rf_annual: float = 0.03) -> pd.DataFram
     """
     rows = []
     for path in file_paths:
-        df = load_index_data(path)
+        df = load_data(path)
         if df.empty:
             continue
         m = compute_metrics_single(df, rf_annual=rf_annual)
@@ -212,7 +211,6 @@ def bar_rank(df: pd.DataFrame, col: str, title: str):
     plt.show()
     
 
-
 def yearly_comparison_multi_index(
     fund_paths: List[str],
     index_paths: List[str],
@@ -228,7 +226,7 @@ def yearly_comparison_multi_index(
     # Load all indexes
     index_dfs = {}
     for path in index_paths:
-        df = load_index_data(path)
+        df = load_data(path)
         df = df.set_index("date")
         name = df["short_name"].iloc[0]
         index_dfs[name] = df
@@ -236,7 +234,7 @@ def yearly_comparison_multi_index(
     results = []
 
     for path in fund_paths:
-        fund_df = load_index_data(path)
+        fund_df = load_data(path)
         if fund_df.empty:
             continue  # skip invalid or too-short funds
         fund_df = fund_df.set_index("date")
