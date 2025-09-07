@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from math import sqrt
 from typing import List, Dict
+import seaborn as sns
 
 
 # ---------- I/O & helpers ----------
@@ -173,5 +174,145 @@ def bar_rank(df: pd.DataFrame, col: str, title: str):
     plt.title(title)
     plt.xlabel("Percent (%)" if pct_like else col)
     plt.gca().invert_yaxis()
+    plt.tight_layout()
+    plt.show()
+    
+def load_index_data(csv_path: str) -> pd.DataFrame:
+    """
+    Load index CSV -> DataFrame with [date, nav_per_unit, short_name].
+    Use column 'close' as nav_per_unit.
+    """
+    df = pd.read_csv(csv_path)
+    if "time" not in df.columns or "close" not in df.columns:
+        raise ValueError(f"{csv_path} must contain columns: time, close")
+
+    df = df.rename(columns={"time": "date", "close": "nav_per_unit"})
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date").drop_duplicates(subset="date").reset_index(drop=True)
+    df["short_name"] = Path(csv_path).stem.upper()
+    return df[["date", "nav_per_unit", "short_name"]]
+    
+
+def yearly_comparison_multi_index(
+    fund_paths: List[str],
+    index_paths: List[str],
+    min_months_first_year: int = 3
+) -> pd.DataFrame:
+    """
+    Compare funds with multiple indexes on a yearly basis.
+    - If the first year of the fund has < min_months_first_year months of data, skip it.
+    - Later years only require data at the beginning and end of the year.
+    - Each index will have 2 columns: return_x and beat_x (x = index name).
+    """
+    # Load all indexes
+    index_dfs = {}
+    for path in index_paths:
+        df = load_index_data(path)
+        df = df.set_index("date")
+        name = df["short_name"].iloc[0]
+        index_dfs[name] = df
+
+    results = []
+
+    for path in fund_paths:
+        fund_df = load_data(path).set_index("date")
+        fund_name = fund_df["short_name"].iloc[0]
+
+        # List of available years
+        years = sorted(set(fund_df.index.year))
+        first_year = years[0] if years else None
+
+        for yr in years:
+            fund_year = fund_df[fund_df.index.year == yr]
+            if fund_year.empty:
+                continue
+
+            # First year must have at least min_months_first_year months of data
+            if yr == first_year:
+                months = (fund_year.index[-1] - fund_year.index[0]).days / 30.44
+                if months < min_months_first_year:
+                    continue
+
+            row = {"fund": fund_name, "year": yr}
+
+            # Fund return for the year
+            fund_start = fund_year["nav_per_unit"].iloc[0]
+            fund_end = fund_year["nav_per_unit"].iloc[-1]
+            row["fund_return"] = fund_end / fund_start - 1
+
+            # Add columns for each index
+            for idx_name, idx_df in index_dfs.items():
+                idx_year = idx_df[idx_df.index.year == yr]
+                if idx_year.empty:
+                    row[f"return_{idx_name}"] = None
+                    row[f"beat_{idx_name}"] = None
+                else:
+                    idx_start = idx_year["nav_per_unit"].iloc[0]
+                    idx_end = idx_year["nav_per_unit"].iloc[-1]
+                    idx_ret = idx_end / idx_start - 1
+                    row[f"return_{idx_name}"] = idx_ret
+                    row[f"beat_{idx_name}"] = row["fund_return"] > idx_ret
+
+            results.append(row)
+
+    return pd.DataFrame(results)
+
+
+def plot_yearly_heatmap(df: pd.DataFrame, index_name: str):
+    """
+    Plot yearly heatmap for beat_index.
+    ✓ = fund outperformed, ✗ = fund underperformed, empty = no data.
+    """
+    col = f"beat_{index_name.upper()}"
+    if col not in df.columns:
+        print(f"Column {col} not found")
+        return
+
+    df = df.copy()
+    df["year"] = df["year"].astype(int)
+
+    # Normalize: handle True/False/None or string equivalents
+    def normalize(x):
+        if x is True or str(x) == "True":
+            return True
+        if x is False or str(x) == "False":
+            return False
+        return np.nan
+
+    df[col] = df[col].map(normalize)
+
+    # Pivot table (fund x year)
+    pivot = df.pivot_table(index="fund", columns="year", values=col, aggfunc="first")
+
+    # Debug print
+    print("Pivot sample:\n", pivot.head())
+
+    if pivot.empty or pivot.dropna(how="all").empty:
+        print("No valid data to plot heatmap.")
+        return
+
+    # Annotation symbols
+    annot = pivot.applymap(lambda x: "✓" if x is True else ("✗" if x is False else ""))
+
+    # Numeric values for seaborn
+    pivot_num = pivot.applymap(lambda x: 1 if x is True else (0 if x is False else np.nan))
+
+    if pivot_num.dropna(how="all").empty:
+        print("All values are NaN after conversion.")
+        return
+
+    plt.figure(figsize=(12, max(4, len(pivot) * 0.4)))
+    sns.heatmap(
+        pivot_num,
+        cmap=["#ff4d4d", "#4caf50"],  # red = underperformed, green = outperformed
+        cbar=False,
+        linewidths=0.5,
+        linecolor="grey",
+        annot=annot,
+        fmt="s"
+    )
+    plt.title(f"Beat {index_name.upper()} by year (✓ = win, ✗ = lose)")
+    plt.ylabel("Fund")
+    plt.xlabel("Year")
     plt.tight_layout()
     plt.show()
