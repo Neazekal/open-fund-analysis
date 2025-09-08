@@ -351,3 +351,55 @@ def plot_yearly_heatmap(df: pd.DataFrame, index_name: str):
     plt.xlabel("Year")
     plt.tight_layout()
     plt.show()
+    
+def beat_summary_multi(df: pd.DataFrame, index_names: List[str]) -> pd.DataFrame:
+    """
+    Summarize how many times each fund beat multiple indexes.
+    For each index, return 2 columns:
+      - beat_<index>: ratio string (x/y)
+      - beat_pct_<index>: percentage of wins
+    Sorted by the first index in index_names.
+    """
+    results = pd.DataFrame()
+    results["fund"] = df["fund"].unique()
+
+    for idx in index_names:
+        col = f"beat_{idx.upper()}"
+        if col not in df.columns:
+            raise ValueError(f"Column {col} not found in DataFrame")
+
+        # Normalize
+        def normalize(x):
+            if x is True or str(x) == "True":
+                return True
+            if x is False or str(x) == "False":
+                return False
+            return np.nan
+
+        temp = df.copy()
+        temp[col] = temp[col].map(normalize)
+
+        summary = (
+            temp.groupby("fund")[col]
+            .agg(["sum", "count"])
+            .reset_index()
+            .rename(columns={"sum": f"sum_{idx}", "count": f"count_{idx}"})
+        )
+
+        summary[f"beat_{idx}"] = summary.apply(
+            lambda r: f"{int(r[f'sum_{idx}'])}/{int(r[f'count_{idx}'])}" if r[f"count_{idx}"] > 0 else "0/0",
+            axis=1
+        )
+        summary[f"beat_pct_{idx}"] = summary.apply(
+            lambda r: round((r[f"sum_{idx}"] / r[f"count_{idx}"]) * 100, 2) if r[f"count_{idx}"] > 0 else 0.0,
+            axis=1
+        )
+
+        # Merge vào results
+        results = results.merge(summary[["fund", f"beat_{idx}", f"beat_pct_{idx}"]], on="fund", how="left")
+
+    # Sắp xếp theo % của index đầu tiên
+    first_idx = index_names[0]
+    results = results.sort_values(by=f"beat_pct_{first_idx}", ascending=False).reset_index(drop=True)
+
+    return results
