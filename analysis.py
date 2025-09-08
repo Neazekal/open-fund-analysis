@@ -395,11 +395,61 @@ def beat_summary_multi(df: pd.DataFrame, index_names: List[str]) -> pd.DataFrame
             axis=1
         )
 
-        # Merge vào results
+        # Merge to results
         results = results.merge(summary[["fund", f"beat_{idx}", f"beat_pct_{idx}"]], on="fund", how="left")
 
-    # Sắp xếp theo % của index đầu tiên
+    # Sort by % of the first index
     first_idx = index_names[0]
     results = results.sort_values(by=f"beat_pct_{first_idx}", ascending=False).reset_index(drop=True)
 
     return results
+
+def rank_funds_multi(
+    metrics_df: pd.DataFrame,
+    beat_df: pd.DataFrame,
+    index_list: List[str],
+    weights: Dict[str, float] = None
+) -> pd.DataFrame:
+    """
+    Rank funds using multiple metrics and beat-summary for a list of indexes.
+    Args:
+        metrics_df: DataFrame from compare_funds()
+        beat_df: DataFrame from beat_summary_multi()
+        index_list: list of index names (e.g., ["VNINDEX", "VN30"])
+        weights: dict with weights for each metric and each beat_% column
+    Returns:
+        DataFrame with composite score and ranking
+    """
+    # Default weights
+    if weights is None:
+        weights = {
+            "cagr": 0.3,
+            "sharpe": 0.3,
+            "calmar": 0.2,
+        }
+        # Add equal weights for each index if not given
+        w_index = 0.2 / len(index_list) if index_list else 0
+        for idx in index_list:
+            weights[f"beat_pct_{idx.upper()}"] = w_index
+
+    # Merge metrics and beat results
+    df = metrics_df.merge(beat_df, on="fund", how="left")
+
+    # Normalize helper
+    def normalize(series):
+        if series.max() == series.min():
+            return pd.Series(0, index=series.index)
+        return (series - series.min()) / (series.max() - series.min())
+
+    # Compute score
+    score = pd.Series(0, index=df.index, dtype=float)
+    for col, w in weights.items():
+        if col in df.columns:
+            score += normalize(df[col].astype(float)) * w
+
+    df["score"] = score
+    df = df.sort_values("score", ascending=False).reset_index(drop=True)
+
+    return df[["fund", "cagr", "sharpe", "calmar"] +
+              [f"beat_pct_{idx.upper()}" for idx in index_list] +
+              ["score"]]
